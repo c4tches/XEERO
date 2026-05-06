@@ -101,6 +101,12 @@ ACTIVE_MTXT_PROCESSES = {}
 USER_APPROVED_PREF = {}
 _GLOBAL_SESSION = None
 
+# Delete stale session file BEFORE TelegramClient reads it
+_session_path = os.path.join(SCRIPT_DIR, 'cc_bot_v2.session')
+if os.path.exists(_session_path):
+    os.remove(_session_path)
+    logging.info("Removed old session file to force fresh auth")
+
 client = TelegramClient(os.path.join(SCRIPT_DIR, 'cc_bot_v2'), API_ID, API_HASH)
 
 # ---------- HTTP Session ----------
@@ -498,7 +504,7 @@ async def process_ran_cards(event, cards, global_sites, send_approved=True):
 # ---------- CATCH-ALL EVENT LOGGER ----------
 @client.on(events.NewMessage)
 async def debug_log_all_messages(event):
-    logger.info("Received message from user %s: %s", event.sender_id, event.raw_text[:80] if event.raw_text else "(no text)")
+    logger.info("Received message from user %s in chat %s", event.sender_id, event.chat_id)
 
 # ---------- BOT COMMANDS ----------
 @client.on(events.NewMessage(pattern=r'(?i)^[/.]start$'))
@@ -508,7 +514,7 @@ async def start(event):
         await ensure_user(event.sender_id)
     except Exception as e:
         logger.error("/start ensure_user failed: %s", e, exc_info=True)
-        return await event.reply(f"DB Error: {e}")
+        return await event.reply("An internal error occurred. Please try again later.")
     if await is_banned_user(event.sender_id):
         return await styled_reply(event, f"{PE} <b>BANNED</b>", emoji_ids=[CE["stop"]])
     plan = await get_user_plan(event.sender_id)
@@ -1104,12 +1110,6 @@ async def main():
     except Exception as e:
         logger.critical("Failed to initialize MongoDB: %s", e)
         raise
-
-    # Delete stale session file to avoid cached auth conflicts
-    session_path = os.path.join(SCRIPT_DIR, 'cc_bot_v2.session')
-    if os.path.exists(session_path):
-        logger.info("Removing old session file to force fresh auth...")
-        os.remove(session_path)
 
     logger.info("Starting bot...")
     await client.start(bot_token=BOT_TOKEN)
