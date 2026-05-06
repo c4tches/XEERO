@@ -3,6 +3,7 @@ from telethon import TelegramClient, events, Button
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.extensions import html as thtml
 from telethon.sessions import MemorySession
+from telethon.network.connection import ConnectionTcpObfuscated
 import random, datetime, os, re, asyncio, time, string, aiofiles, aiohttp, logging, glob
 from urllib.parse import urlparse, quote
 
@@ -108,8 +109,11 @@ for _old in glob.glob(os.path.join(SCRIPT_DIR, 'cc_bot_v2.session*')):
     os.remove(_old)
     logging.info("Removed old session file: %s", _old)
 
-# Use MemorySession to avoid all file-based session issues
-client = TelegramClient(MemorySession(), API_ID, API_HASH)
+# Use MemorySession + obfuscated connection to bypass MTProto blocking
+client = TelegramClient(
+    MemorySession(), API_ID, API_HASH,
+    connection=ConnectionTcpObfuscated
+)
 
 # ---------- HTTP Session ----------
 async def get_session():
