@@ -101,7 +101,13 @@ ACTIVE_MTXT_PROCESSES = {}
 USER_APPROVED_PREF = {}
 _GLOBAL_SESSION = None
 
-client = TelegramClient('cc_bot_v2', API_ID, API_HASH)
+# Delete stale session file BEFORE TelegramClient reads it
+_session_path = os.path.join(SCRIPT_DIR, 'cc_bot_v2.session')
+if os.path.exists(_session_path):
+    os.remove(_session_path)
+    logging.info("Removed old session file to force fresh auth")
+
+client = TelegramClient(os.path.join(SCRIPT_DIR, 'cc_bot_v2'), API_ID, API_HASH)
 
 # ---------- HTTP Session ----------
 async def get_session():
@@ -495,10 +501,20 @@ async def process_ran_cards(event, cards, global_sites, send_approved=True):
     await styled_edit(status_msg, final, emoji_ids=[CE["party"], CE["gem"], CE["check"], CE["cross"], CE["warn"], CE["star"]])
     ACTIVE_MTXT_PROCESSES.pop(user_id, None)
 
+# ---------- CATCH-ALL EVENT LOGGER ----------
+@client.on(events.NewMessage)
+async def debug_log_all_messages(event):
+    logger.info("Received message from user %s in chat %s", event.sender_id, event.chat_id)
+
 # ---------- BOT COMMANDS ----------
 @client.on(events.NewMessage(pattern=r'(?i)^[/.]start$'))
 async def start(event):
-    await ensure_user(event.sender_id)
+    logger.info("/start command from user %s", event.sender_id)
+    try:
+        await ensure_user(event.sender_id)
+    except Exception as e:
+        logger.error("/start ensure_user failed: %s", e, exc_info=True)
+        return await event.reply("An internal error occurred. Please try again later.")
     if await is_banned_user(event.sender_id):
         return await styled_reply(event, f"{PE} <b>BANNED</b>", emoji_ids=[CE["stop"]])
     plan = await get_user_plan(event.sender_id)
@@ -1097,7 +1113,9 @@ async def main():
 
     logger.info("Starting bot...")
     await client.start(bot_token=BOT_TOKEN)
-    logger.info("Bot is running!")
+    me = await client.get_me()
+    logger.info("Bot is running! Logged in as @%s (ID: %s)", me.username, me.id)
+    logger.info("Registered %d event handlers", len(client.list_event_handlers()))
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
