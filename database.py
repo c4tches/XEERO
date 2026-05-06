@@ -1,30 +1,41 @@
 import motor.motor_asyncio
 import datetime
 import os
+import logging
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
+
+logger = logging.getLogger(__name__)
 
 # MongoDB connection URI (set environment variable)
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://ZenoShopifyBot:ZenoShopifyBot@zenoshopifybot.wzgefrn.mongodb.net/?appName=ZenoShopifyBot")
 DB_NAME = os.getenv("DB_NAME", "ZenoShopifyBot")
 
-client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
-db = client[DB_NAME]
+# These are initialized in init_db() to ensure they use the correct event loop
+client = None
+db = None
+users_col = None
+proxies_col = None
+sites_col = None
+keys_col = None
+cards_col = None
 
-# Collections
-users_col = db["users"]
-proxies_col = db["user_proxies"]
-sites_col = db["user_sites"]
-keys_col = db["plan_keys"]
-cards_col = db["card_stats"]
-
-# Indexes for performance
 async def init_db():
+    global client, db, users_col, proxies_col, sites_col, keys_col, cards_col
+    client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+    db = client[DB_NAME]
+    users_col = db["users"]
+    proxies_col = db["user_proxies"]
+    sites_col = db["user_sites"]
+    keys_col = db["plan_keys"]
+    cards_col = db["card_stats"]
+    logger.info("MongoDB client created inside running event loop")
     await users_col.create_index("user_id", unique=True)
     await proxies_col.create_index([("user_id", 1), ("proxy_url", 1)])
     await sites_col.create_index([("user_id", 1), ("site", 1)], unique=True)
     await keys_col.create_index("key", unique=True)
     await cards_col.create_index("checked_at")
+    logger.info("MongoDB indexes ensured")
 
 # ---------- USER ----------
 async def ensure_user(user_id: int):
@@ -141,7 +152,8 @@ async def add_site_db(user_id: int, site: str) -> bool:
             upsert=True
         )
         return True
-    except:
+    except Exception as e:
+        logger.warning("add_site_db failed for user %s: %s", user_id, e)
         return False
 
 async def get_user_sites(user_id: int) -> List[str]:
