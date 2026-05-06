@@ -1111,8 +1111,22 @@ async def main():
         logger.critical("Failed to initialize MongoDB: %s", e)
         raise
 
-    logger.info("Starting bot...")
-    await client.start(bot_token=BOT_TOKEN)
+    # Break startup into individual steps to diagnose hangs
+    logger.info("Step 1: Connecting to Telegram...")
+    await client.connect()
+    logger.info("Step 2: Connected! Checking authorization...")
+
+    if not await client.is_user_authorized():
+        logger.info("Step 3: Not authorized, signing in with bot token...")
+        try:
+            await client.sign_in(bot_token=BOT_TOKEN)
+            logger.info("Step 4: sign_in completed!")
+        except Exception as e:
+            logger.critical("Bot sign_in FAILED: %s", e, exc_info=True)
+            raise
+    else:
+        logger.info("Step 3: Already authorized from session")
+
     me = await client.get_me()
     logger.info("Bot is running! Logged in as @%s (ID: %s)", me.username, me.id)
     logger.info("Registered %d event handlers", len(client.list_event_handlers()))
