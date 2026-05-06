@@ -23,12 +23,12 @@ from database import (
 )
 
 # ---------- CONFIG ----------
-API_ID = 37193134
-API_HASH = '4b1667b97accd0898b61d3a55d9f864e'
-BOT_TOKEN = '8588651388:AAEggyGdccq-1KTx-oyU3ngQNY6h_3iDePs'
-ADMIN_ID = [7167704900]
-GROUP_ID = -1003764248460
-API_BASE_URL = "https://web-production-9db0.up.railway.app/shopify"
+API_ID = int(os.getenv('API_ID', '37193134'))
+API_HASH = os.getenv('API_HASH', '4b1667b97accd0898b61d3a55d9f864e')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8588651388:AAEggyGdccq-1KTx-oyU3ngQNY6h_3iDePs')
+ADMIN_ID = [int(x) for x in os.getenv('ADMIN_ID', '7167704900').split(',')]
+GROUP_ID = int(os.getenv('GROUP_ID', '-1003764248460'))
+API_BASE_URL = os.getenv('API_BASE_URL', 'https://web-production-9db0.up.railway.app/shopify')
 
 # ---------- CUSTOM EMOJIS (from second file) ----------
 CE = {
@@ -60,9 +60,6 @@ CE = {
 PE = "⭐"  # placeholder emoji
 
 # ---------- HTML + Custom Emoji Helpers ----------
-def _utf16_offset(text, py_pos):
-    return len(text[:py_pos].encode('utf-16-le')) // 2
-
 def _build_entities(html_text, emoji_ids=None):
     text, entities = thtml.parse(html_text)
     if emoji_ids:
@@ -675,14 +672,19 @@ async def ran_cmd(event):
     if not proxy:
         return await styled_reply(event, f"{PE} Proxy required! Use /addpxy", emoji_ids=[CE["warn"]])
     path = await replied.download_media()
+    if not path:
+        return await styled_reply(event, f"{PE} Failed to download file", emoji_ids=[CE["cross"]])
     try:
         async with aiofiles.open(path,'r') as f:
             content = await f.read()
-        os.remove(path)
     except Exception as e:
         logger.error("Error reading file in /ran: %s", e)
-        os.remove(path)
         return await styled_reply(event, f"{PE} Error reading file", emoji_ids=[CE["cross"]])
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     cards = extract_all_cards(content)
     if not cards:
         return await styled_reply(event, f"{PE} No valid cards", emoji_ids=[CE["cross"]])
@@ -741,14 +743,19 @@ async def mtxt_cmd(event):
     if not sites:
         return await styled_reply(event, f"{PE} No sites. Add with /add", emoji_ids=[CE["warn"]])
     path = await replied.download_media()
+    if not path:
+        return await styled_reply(event, f"{PE} Failed to download file", emoji_ids=[CE["cross"]])
     try:
         async with aiofiles.open(path,'r') as f:
             content = await f.read()
-        os.remove(path)
     except Exception as e:
         logger.error("Error reading file in /mtxt: %s", e)
-        os.remove(path)
         return await styled_reply(event, f"{PE} Read error", emoji_ids=[CE["cross"]])
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     cards = extract_all_cards(content)
     if not cards:
         return await styled_reply(event, f"{PE} No valid cards", emoji_ids=[CE["cross"]])
@@ -809,6 +816,7 @@ async def add_site_cmd(event):
 async def rm_site_cmd(event):
     if await is_banned_user(event.sender_id):
         return await styled_reply(event, f"{PE} BANNED", emoji_ids=[CE["stop"]])
+    await ensure_user(event.sender_id)
     text = re.sub(r'^[/.]rm\s*', '', event.raw_text, flags=re.I).strip()
     if not text:
         return await styled_reply(event, f"{PE} Usage: /rm site.com", emoji_ids=[CE["warn"]])
@@ -823,6 +831,7 @@ async def rm_site_cmd(event):
 async def check_sites_cmd(event):
     if await is_banned_user(event.sender_id):
         return await styled_reply(event, f"{PE} BANNED", emoji_ids=[CE["stop"]])
+    await ensure_user(event.sender_id)
     proxy = await get_random_proxy(event.sender_id)
     if not proxy:
         return await styled_reply(event, f"{PE} Proxy required", emoji_ids=[CE["warn"]])
@@ -856,6 +865,8 @@ async def addpxy_cmd(event):
         reply_msg = await event.get_reply_message()
         if reply_msg.document:
             file_path = await reply_msg.download_media()
+            if not file_path:
+                return await styled_reply(event, f"{PE} Failed to download file", emoji_ids=[CE["cross"]])
             try:
                 async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
                     content = await f.read()
@@ -919,8 +930,8 @@ async def addpxy_cmd(event):
         result_text += f"┃ {p['type'].upper()} ━ {p['ip']}:{p['port']}{auth}\n"
     if failed:
         result_text += f"\n{PE} Failed ({len(failed)}):\n"
-        for f in failed[:5]:
-            result_text += f"┃ {f['type'].upper()} ━ {f['ip']}:{f['port']}\n"
+        for fp in failed[:5]:
+            result_text += f"┃ {fp['type'].upper()} ━ {fp['ip']}:{fp['port']}\n"
         if len(failed) > 5:
             result_text += f"┃ ... and {len(failed)-5} more\n"
     if invalid_lines:
@@ -987,6 +998,7 @@ async def rmpxy_cmd(event):
 async def info_cmd(event):
     if await is_banned_user(event.sender_id):
         return await styled_reply(event, f"{PE} BANNED", emoji_ids=[CE["stop"]])
+    await ensure_user(event.sender_id)
     plan = await get_user_plan(event.sender_id)
     limit = get_cc_limit(plan, event.sender_id)
     sites = await get_user_sites(event.sender_id)
@@ -998,6 +1010,7 @@ async def info_cmd(event):
 async def redeem_cmd(event):
     if await is_banned_user(event.sender_id):
         return await styled_reply(event, f"{PE} BANNED", emoji_ids=[CE["stop"]])
+    await ensure_user(event.sender_id)
     parts = event.raw_text.split()
     if len(parts) != 2:
         return await styled_reply(event, f"{PE} Usage: /redeem KEY", emoji_ids=[CE["warn"]])
@@ -1130,7 +1143,12 @@ async def main():
     me = await client.get_me()
     logger.info("Bot is running! Logged in as @%s (ID: %s)", me.username, me.id)
     logger.info("Registered %d event handlers", len(client.list_event_handlers()))
-    await client.run_until_disconnected()
+    try:
+        await client.run_until_disconnected()
+    finally:
+        if _GLOBAL_SESSION and not _GLOBAL_SESSION.closed:
+            await _GLOBAL_SESSION.close()
+            logger.info("aiohttp session closed")
 
 if __name__ == "__main__":
     asyncio.run(main())
