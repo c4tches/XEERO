@@ -1,8 +1,16 @@
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.extensions import html as thtml
-import random, datetime, os, re, asyncio, time, string, aiofiles, aiohttp
+import random, datetime, os, re, asyncio, time, string, aiofiles, aiohttp, logging
 from urllib.parse import urlparse, quote
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Import database functions (MongoDB)
 from database import (
@@ -133,7 +141,7 @@ def is_valid_url_or_domain(url):
     if domain.startswith(('http://', 'https://')):
         try:
             parsed = urlparse(url)
-        except:
+        except Exception:
             return False
         domain = parsed.netloc
     pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$'
@@ -193,7 +201,8 @@ async def test_proxy(proxy_url):
                 data = await resp.json()
                 return True, data.get('ip', 'Unknown')
             return False, None
-    except:
+    except Exception as e:
+        logger.debug("Proxy test failed: %s", e)
         return False, None
 
 async def get_bin_info(card_number):
@@ -206,7 +215,8 @@ async def get_bin_info(card_number):
             data = await res.json()
             return (data.get('brand','-'), data.get('type','-'), data.get('level','-'),
                     data.get('bank','-'), data.get('country_name','-'), data.get('country_flag','???'))
-    except:
+    except Exception as e:
+        logger.warning("BIN lookup failed: %s", e)
         return "-", "-", "-", "-", "-", "???"
 
 SITE_ERROR_KEYWORDS = [
@@ -264,7 +274,8 @@ async def call_shopify_api(site, cc, proxy_data=None):
         try:
             data = await resp.json()
             return data, None
-        except:
+        except Exception as e:
+            logger.warning("Invalid JSON from API: %s", e)
             return None, "Invalid JSON"
 
 async def check_card_specific_site(card, site, user_id=None):
@@ -293,7 +304,8 @@ async def test_single_site(site, test_card="4031630422575208|01|2030|280", user_
         if err or is_site_error(data.get('Response','')):
             return {"status": "dead", "response": err or data.get('Response',''), "site": site, "price": data.get('Price','-') if data else '-'}
         return {"status": "working", "response": data.get('Response',''), "site": site, "price": data.get('Price','-')}
-    except:
+    except Exception as e:
+        logger.warning("Site test exception for %s: %s", site, e)
         return {"status": "dead", "response": "Exception", "site": site, "price": "-"}
 
 def get_status_header(status):
@@ -313,8 +325,8 @@ async def send_hit_notification(card, result, username, user_id):
         gateway = result.get('Gateway','Shopify')
         hit_msg = f"{PE} CHARGED HIT {PE}\n━━━━━━━━━━━━━━━━━\nResponse ━ {response}\nGateway ━ {gateway}\nPrice ━ {price}\n━━━━━━━━━━━━━━━━━\nUser ━ @{username}"
         await styled_send(GROUP_ID, hit_msg, emoji_ids=[CE["fire"], CE["fire"]])
-    except:
-        pass
+    except Exception as e:
+        logger.error("send_hit_notification failed: %s", e)
 
 async def handle_hit(event, card, result, status, site_info, username, is_private):
     try:
@@ -338,19 +350,19 @@ Country: {country} {flag}</pre>"""
                 try:
                     m = await event.reply("⚡ Charged hit")
                     await m.pin()
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to pin charged hit: %s", e)
             if is_private:
                 await send_hit_notification(card, result, username, event.sender_id)
-    except:
-        pass
+    except Exception as e:
+        logger.error("handle_hit failed: %s", e)
 
 async def process_mtxt_cards(event, cards, local_sites, send_approved=True):
     user_id = event.sender_id
     try:
         sender = await event.get_sender()
         username = sender.username or f"user_{user_id}"
-    except:
+    except Exception:
         username = f"user_{user_id}"
     total = len(cards)
     checked, approved, charged, declined, errors = 0,0,0,0,0
@@ -411,7 +423,7 @@ async def process_mtxt_cards(event, cards, local_sites, send_approved=True):
 {PE} Errors ━ {errors}
 ━━━━━━━━━━━━━━━━━
 {PE} Total ━ {total}"""
-    await styled_edit(status_msg, final, emoji_ids=[CE["party"], CE["gem"], CE["check"]])
+    await styled_edit(status_msg, final, emoji_ids=[CE["party"], CE["gem"], CE["check"], CE["cross"], CE["warn"], CE["star"]])
     ACTIVE_MTXT_PROCESSES.pop(user_id, None)
 
 async def process_ran_cards(event, cards, global_sites, send_approved=True):
@@ -419,7 +431,7 @@ async def process_ran_cards(event, cards, global_sites, send_approved=True):
     try:
         sender = await event.get_sender()
         username = sender.username or f"user_{user_id}"
-    except:
+    except Exception:
         username = f"user_{user_id}"
     total = len(cards)
     checked, approved, charged, declined, errors = 0,0,0,0,0
@@ -480,7 +492,7 @@ async def process_ran_cards(event, cards, global_sites, send_approved=True):
 {PE} Errors ━ {errors}
 ━━━━━━━━━━━━━━━━━
 {PE} Total ━ {total}"""
-    await styled_edit(status_msg, final, emoji_ids=[CE["party"], CE["gem"], CE["check"],CE["cross"],CE["warn"]])
+    await styled_edit(status_msg, final, emoji_ids=[CE["party"], CE["gem"], CE["check"], CE["cross"], CE["warn"], CE["star"]])
     ACTIVE_MTXT_PROCESSES.pop(user_id, None)
 
 # ---------- BOT COMMANDS ----------
@@ -562,7 +574,8 @@ Country: {country} {flag}</pre>"""
                 try:
                     m = await event.reply("⚡ Charged hit")
                     await m.pin()
-                except: pass
+                except Exception as e:
+                    logger.warning("Failed to pin charged hit in /sh: %s", e)
             else:
                 sender = await event.get_sender()
                 username = sender.username or f"user_{event.sender_id}"
@@ -572,6 +585,57 @@ Country: {country} {flag}</pre>"""
     except Exception as e:
         await loading.delete()
         await styled_reply(event, f"{PE} Error: {e}", emoji_ids=[CE["cross"]])
+
+@client.on(events.NewMessage(pattern=r'(?i)^[/.]msh\b'))
+async def msh_cmd(event):
+    if await is_banned_user(event.sender_id):
+        return await styled_reply(event, f"{PE} BANNED", emoji_ids=[CE["stop"]])
+    if event.sender_id in ACTIVE_MTXT_PROCESSES:
+        return await styled_reply(event, f"{PE} Already running", emoji_ids=[CE["warn"]])
+    await ensure_user(event.sender_id)
+    proxy = await get_random_proxy(event.sender_id)
+    if not proxy:
+        return await styled_reply(event, f"{PE} Proxy required! Use /addpxy", emoji_ids=[CE["warn"]])
+    text = re.sub(r'^[/.]msh\s*', '', event.raw_text, flags=re.I).strip()
+    if not text and event.reply_to_msg_id:
+        replied = await event.get_reply_message()
+        if replied and replied.text:
+            text = replied.text
+    if not text:
+        return await styled_reply(event, f"{PE} Usage: /msh card1|mm|yy|cvv\\ncard2|mm|yy|cvv\nOr reply to a message with cards", emoji_ids=[CE["warn"]])
+    cards = extract_all_cards(text)
+    if not cards:
+        return await styled_reply(event, f"{PE} No valid cards found", emoji_ids=[CE["cross"]])
+    plan = await get_user_plan(event.sender_id)
+    limit = get_cc_limit(plan, event.sender_id)
+    if len(cards) > limit:
+        cards = cards[:limit]
+        await styled_reply(event, f"{PE} Limiting to {limit} cards", emoji_ids=[CE["warn"]])
+    sites = await get_user_sites(event.sender_id)
+    if not sites:
+        return await styled_reply(event, f"{PE} No sites. Add with /add", emoji_ids=[CE["warn"]])
+    kb = [
+        [pbtn("\u2705 Yes (Charged+Approved)", f"msh_pref:yes:{event.sender_id}")],
+        [pbtn("\u274c No (Only Charged)", f"msh_pref:no:{event.sender_id}")]
+    ]
+    pref_msg = await styled_reply(event, f"{PE} Filter: include Approved?", kb, emoji_ids=[CE["pin"]])
+    USER_APPROVED_PREF[f"msh_{event.sender_id}"] = {"cards": cards, "sites": sites, "event": event, "pref_msg": pref_msg}
+
+@client.on(events.CallbackQuery(pattern=rb"msh_pref:(yes|no):(\d+)"))
+async def msh_pref_cb(event):
+    match = event.pattern_match
+    pref = match.group(1).decode()
+    uid = int(match.group(2).decode())
+    if event.sender_id != uid:
+        return await event.answer("Not yours", alert=True)
+    data = USER_APPROVED_PREF.pop(f"msh_{uid}", None)
+    if not data:
+        return await event.answer("Expired", alert=True)
+    await data["pref_msg"].delete()
+    send_approved = (pref == "yes")
+    ACTIVE_MTXT_PROCESSES[uid] = True
+    await event.answer("Starting...", alert=False)
+    asyncio.create_task(process_mtxt_cards(data["event"], data["cards"], data["sites"], send_approved))
 
 @client.on(events.NewMessage(pattern=r'(?i)^[/.]ran\b'))
 async def ran_cmd(event):
@@ -584,9 +648,10 @@ async def ran_cmd(event):
     replied = await event.get_reply_message()
     if not replied or not replied.document:
         return await styled_reply(event, f"{PE} Reply to a .txt file", emoji_ids=[CE["warn"]])
-    if not os.path.exists('sites.txt'):
+    sites_path = os.path.join(SCRIPT_DIR, 'sites.txt')
+    if not os.path.exists(sites_path):
         return await styled_reply(event, f"{PE} sites.txt missing! Contact admin.", emoji_ids=[CE["cross"]])
-    with open('sites.txt','r') as f:
+    with open(sites_path, 'r') as f:
         global_sites = [l.strip() for l in f if l.strip()]
     if not global_sites:
         return await styled_reply(event, f"{PE} No sites in sites.txt", emoji_ids=[CE["cross"]])
@@ -598,7 +663,8 @@ async def ran_cmd(event):
         async with aiofiles.open(path,'r') as f:
             content = await f.read()
         os.remove(path)
-    except:
+    except Exception as e:
+        logger.error("Error reading file in /ran: %s", e)
         os.remove(path)
         return await styled_reply(event, f"{PE} Error reading file", emoji_ids=[CE["cross"]])
     cards = extract_all_cards(content)
@@ -663,7 +729,8 @@ async def mtxt_cmd(event):
         async with aiofiles.open(path,'r') as f:
             content = await f.read()
         os.remove(path)
-    except:
+    except Exception as e:
+        logger.error("Error reading file in /mtxt: %s", e)
         os.remove(path)
         return await styled_reply(event, f"{PE} Read error", emoji_ids=[CE["cross"]])
     cards = extract_all_cards(content)
@@ -783,7 +850,7 @@ async def addpxy_cmd(event):
             finally:
                 try:
                     os.remove(file_path)
-                except:
+                except OSError:
                     pass
         elif reply_msg.text:
             proxy_lines = [line.strip() for line in reply_msg.text.splitlines() if line.strip()]
@@ -896,7 +963,8 @@ async def rmpxy_cmd(event):
                 await styled_reply(event, f"{PE} Removed {removed['ip']}:{removed['port']}", emoji_ids=[CE["check"]])
             else:
                 await styled_reply(event, f"{PE} Invalid index", emoji_ids=[CE["cross"]])
-        except:
+        except Exception as e:
+            logger.warning("rmpxy parse error: %s", e)
             await styled_reply(event, f"{PE} Invalid index", emoji_ids=[CE["cross"]])
 
 @client.on(events.NewMessage(pattern=r'(?i)^[/.]info$'))
@@ -1020,10 +1088,16 @@ async def unban_admin(event):
 
 # ---------- MAIN ----------
 async def main():
-    await init_db()
-    print("🚀 Starting bot with MongoDB and custom emojis...")
+    try:
+        await init_db()
+        logger.info("MongoDB initialized successfully")
+    except Exception as e:
+        logger.critical("Failed to initialize MongoDB: %s", e)
+        raise
+
+    logger.info("Starting bot...")
     await client.start(bot_token=BOT_TOKEN)
-    print("✅ Bot is running!")
+    logger.info("Bot is running!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
