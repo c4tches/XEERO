@@ -1,7 +1,9 @@
+import telethon
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.extensions import html as thtml
-import random, datetime, os, re, asyncio, time, string, aiofiles, aiohttp, logging
+from telethon.sessions import MemorySession
+import random, datetime, os, re, asyncio, time, string, aiofiles, aiohttp, logging, glob
 from urllib.parse import urlparse, quote
 
 logging.basicConfig(
@@ -101,13 +103,13 @@ ACTIVE_MTXT_PROCESSES = {}
 USER_APPROVED_PREF = {}
 _GLOBAL_SESSION = None
 
-# Delete stale session file BEFORE TelegramClient reads it
-_session_path = os.path.join(SCRIPT_DIR, 'cc_bot_v2.session')
-if os.path.exists(_session_path):
-    os.remove(_session_path)
-    logging.info("Removed old session file to force fresh auth")
+# Clean up ALL old session files (including journal/wal files)
+for _old in glob.glob(os.path.join(SCRIPT_DIR, 'cc_bot_v2.session*')):
+    os.remove(_old)
+    logging.info("Removed old session file: %s", _old)
 
-client = TelegramClient(os.path.join(SCRIPT_DIR, 'cc_bot_v2'), API_ID, API_HASH)
+# Use MemorySession to avoid all file-based session issues
+client = TelegramClient(MemorySession(), API_ID, API_HASH)
 
 # ---------- HTTP Session ----------
 async def get_session():
@@ -1111,21 +1113,27 @@ async def main():
         logger.critical("Failed to initialize MongoDB: %s", e)
         raise
 
-    # Break startup into individual steps to diagnose hangs
-    logger.info("Step 1: Connecting to Telegram...")
-    await client.connect()
-    logger.info("Step 2: Connected! Checking authorization...")
+    logger.info("Telethon version: %s", telethon.__version__)
+    logger.info("Python version: %s", os.sys.version)
 
-    if not await client.is_user_authorized():
-        logger.info("Step 3: Not authorized, signing in with bot token...")
-        try:
-            await client.sign_in(bot_token=BOT_TOKEN)
-            logger.info("Step 4: sign_in completed!")
-        except Exception as e:
-            logger.critical("Bot sign_in FAILED: %s", e, exc_info=True)
-            raise
-    else:
-        logger.info("Step 3: Already authorized from session")
+    # Step-by-step startup with timeouts
+    logger.info("Step 1: Connecting to Telegram...")
+    try:
+        await asyncio.wait_for(client.connect(), timeout=30)
+    except asyncio.TimeoutError:
+        logger.critical("TIMEOUT: client.connect() took >30s. MTProto handshake may be blocked.")
+        raise
+    logger.info("Step 2: Connected! Signing in with bot token...")
+
+    try:
+        await asyncio.wait_for(client.sign_in(bot_token=BOT_TOKEN), timeout=30)
+        logger.info("Step 3: sign_in completed!")
+    except asyncio.TimeoutError:
+        logger.critical("TIMEOUT: sign_in() took >30s. Bot token may be invalid or network issue.")
+        raise
+    except Exception as e:
+        logger.critical("Bot sign_in FAILED: %s", e, exc_info=True)
+        raise
 
     me = await client.get_me()
     logger.info("Bot is running! Logged in as @%s (ID: %s)", me.username, me.id)
